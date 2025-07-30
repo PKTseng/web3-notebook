@@ -185,6 +185,56 @@
 
 ---
 
+## call 入參詳解
+
+```solidity
+(bool success, bytes memory data) = target.call{value: ethAmount, gas: gasLimit}(callData);
+```
+
+### 1. target（調用目標）
+
+- **類型**: address
+- **說明**: 要調用的合約地址或外部帳戶地址
+
+### 2. 大括號內的選項 `{}`
+
+- **value**: 要發送的以太幣數量（wei 單位）
+- **gas**: 為這次調用分配的 gas 限制（可選）
+
+### 3. 小括號內的 callData
+
+- **類型**: bytes
+- **說明**: 要發送的數據，通常是函數選擇器和參數的編碼
+
+## 實際例子
+
+```solidity
+// 1. 單純轉帳以太幣
+(bool success, ) = payable(recipient).call{value: 1 ether}("");
+
+// 2. 調用合約函數並發送以太幣
+bytes memory data = abi.encodeWithSignature("deposit()", "");
+(bool success, bytes memory returnData) = target.call{value: 0.5 ether, gas: 50000}(data);
+
+// 3. 調用帶參數的函數
+bytes memory data = abi.encodeWithSignature("transfer(address,uint256)", to, amount);
+(bool success, ) = token.call(data);
+
+// 4. 使用 abi.encodeCall（更安全的方式）
+(bool success, ) = target.call{value: 1 ether}(
+    abi.encodeCall(SomeContract.someFunction, (param1, param2))
+);
+```
+
+## 返回值
+
+- **success**: bool 類型，表示調用是否成功
+- **data**: bytes 類型，包含被調用函數的返回數據
+
+這種靈活性讓 `call` 可以處理各種複雜的合約交互場景。
+
+---
+
 ### 比喻
 
 像是匯款工具：
@@ -227,11 +277,8 @@ require(sent, "Failed to send Ether");
 ### 解釋
 
 - EOA 全名：**Externally Owned Account**，中文常說「外部帳戶」。
-
 - EOA 由**私鑰**控制，例如 MetaMask、硬體錢包、手機錢包都是 EOA。
-
 - 只有 EOA 可以**主動發送交易**（如轉帳、呼叫合約），智能合約帳戶不能主動發交易。
-
 - EOA 沒有自己的程式碼，只是地址+餘額+nonce。
 
 - 對比：
@@ -249,3 +296,183 @@ require(sent, "Failed to send Ether");
 **簡單記憶：**
 
 - EOA = 一般錢包地址（有私鑰控制），可以主動發交易。
+
+---
+
+## 智能合約的 this
+
+#### antony 解釋
+
+this 指的是当前合约的实例对象，通常我们可以通过this去访问当前合约的变量、函数等等,例如 this.add()， 这跟你写前端比较类似
+address(this)，但表获取当前合约地址
+msg.sender 代表调用着的地址，跟你理解的一样，谁发起的交易，那就是谁的钱包地址
+上次讲到了EOA账户 和 CA账户 ， 钱包地址一般指的就是由用户自己管理的有私钥的钱包(EOA)， 合约地址是没有私钥的
+
+#### 自己整合觀念
+
+msg.sender 就是有私鑰的錢包地址
+this 是合約地址沒有私鑰
+
+this 就是合約對象，對象裡面含有變量、函數等等，通過 address(this) 獲取當前合約地址
+
+如果我要獲取當前合約的餘額，寫法就是 address(this).balance
+
+同理如果要獲取當前合約的 refund() 函式，寫法就是address(this).refund()
+
+```javascript
+contract Example {
+    function demonstrateAddresses() external payable {
+        // msg.sender: 調用這個函數的人的地址
+        address caller = msg.sender;
+
+        // address(this): 這個合約的地址
+        address contractAddr = address(this);
+
+        // 合約的餘額
+        uint256 contractBalance = address(this).balance;
+
+        // 調用者的餘額
+        uint256 callerBalance = msg.sender.balance;
+    }
+}
+```
+
+## external、public、private、private
+
+- 只有外部用戶？ → external
+- 外部用戶 + 合約內部？ → public
+- 只有合約內部？ → internal
+- 絕對隱私，連繼承都不給？ → private
+
+* 用戶操作的功能 = external
+* 查詢資料的功能 = public
+* 內部計算的功能 = internal
+
+## constructor 的 block 跟 rund 的 block 是不一樣的
+
+block.timestamp 是動態的
+
+### 1. **每次調用時都會取得當前區塊的時間戳**
+
+```solidity
+constructor(uint256 _lockTime) {
+    deploymentTimestamp = block.timestamp; // 合約部署時的區塊時間
+    lockTime = _lockTime;
+}
+
+function fund() external payable {
+    require(block.timestamp < deploymentTimestamp + lockTime, "window is closed");
+    //      ↑這個是調用 fund() 時的區塊時間
+}
+```
+
+### 2. **實際時間線例子**
+
+假設以太坊每 12 秒產生一個新區塊：
+
+```
+區塊 #1000: 2025-01-01 12:00:00
+├─ 部署合約 (constructor 執行)
+├─ deploymentTimestamp = 1735732800
+└─ lockTime = 604800 (7天)
+
+區塊 #1001: 2025-01-01 12:00:12
+├─ 用戶調用 fund()
+├─ block.timestamp = 1735732812 (比部署時間晚12秒)
+└─ 檢查: 1735732812 < 1735732800 + 604800 ✅ 還在投資期間
+
+區塊 #50000: 2025-01-08 13:00:00
+├─ 用戶調用 fund()
+├─ block.timestamp = 1736337600 (7天後)
+└─ 檢查: 1736337600 < 1735732800 + 604800 ❌ 投資期間已結束
+```
+
+### 3. **程式邏輯分析**
+
+```solidity
+// constructor 執行時
+deploymentTimestamp = block.timestamp; // 儲存部署時的時間戳，不會改變
+
+// fund() 每次被調用時
+require(block.timestamp < deploymentTimestamp + lockTime, "window is closed");
+//      ↑當前時間      ↑固定的部署時間 + 鎖定期
+```
+
+### 4. **詳細對比**
+
+| 時間點             | constructor 中的 block.timestamp | fund() 中的 block.timestamp      |
+| ------------------ | -------------------------------- | -------------------------------- |
+| 合約部署時         | 1735732800 (2025-01-01 12:00:00) | -                                |
+| 1小時後調用 fund() | -                                | 1735736400 (2025-01-01 13:00:00) |
+| 1天後調用 fund()   | -                                | 1735819200 (2025-01-02 12:00:00) |
+| 7天後調用 fund()   | -                                | 1736337600 (2025-01-08 12:00:00) |
+
+### 5. **為什麼要這樣設計？**
+
+```solidity
+function fund() external payable {
+    // 每次調用都要檢查當前時間是否還在投資期間
+    require(block.timestamp < deploymentTimestamp + lockTime, "window is closed");
+
+    // 如果用固定時間，就無法動態判斷投資期間是否結束
+}
+
+function getFund() external windowClosed onlyOwner {
+    // windowClosed 檢查當前時間是否已超過鎖定期
+}
+
+modifier windowClosed() {
+    require(block.timestamp >= deploymentTimestamp + lockTime, "window is not closed");
+    //      ↑當前時間，每次調用都不同
+    _;
+}
+```
+
+### 6. **實際測試例子**
+
+```solidity
+contract TimeTest {
+    uint256 public deployTime;
+    uint256 public lastCallTime;
+
+    constructor() {
+        deployTime = block.timestamp; // 部署時固定
+    }
+
+    function updateTime() external {
+        lastCallTime = block.timestamp; // 每次調用都更新
+    }
+
+    function getTimeDifference() external view returns (uint256) {
+        return block.timestamp - deployTime; // 顯示從部署到現在過了多少秒
+    }
+}
+```
+
+### 7. **區塊時間的特性**
+
+```solidity
+// 同一個交易中的多次 block.timestamp 調用會返回相同值
+function sameTransaction() external {
+    uint256 time1 = block.timestamp;
+    uint256 time2 = block.timestamp;
+    // time1 == time2，因為在同一個區塊中
+}
+
+// 不同交易中的 block.timestamp 會不同（除非在同一個區塊中）
+```
+
+## 總結
+
+- **constructor 中的 block.timestamp**：固定在合約部署時的區塊時間
+- **fund() 中的 block.timestamp**：每次調用時當前區塊的時間戳
+- **deploymentTimestamp**：儲存部署時的時間戳，永遠不變
+- **動態比較**：每次調用函數時都會用當前時間與部署時間做比較
+
+這就像設定一個倒數計時器，每次檢查都會看現在的時間與開始時間的差距！
+
+---
+
+## 在 Solidity 和區塊鏈領域中，token 和 coin 的主要差別
+
+![image](https://hackmd.io/_uploads/S1FqXiwwlg.png)
