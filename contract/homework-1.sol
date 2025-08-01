@@ -31,5 +31,13 @@ contract SimpleEscrow {
 
     (bool success, ) = payable(recipient).call{value: address(this).balance}("");
     require(success, "transfer fail");
+
+    // if (_returnToBuyer) {
+    //   (bool success, ) = payable(buyer).call{value: address(this).balance}("");
+    //   require(success, "transfer fail");
+    // } else {
+    //   (bool success, ) = payable(seller).call{value: address(this).balance}("");
+    //   require(success, "transfer fail");
+    // }
   }
 }
